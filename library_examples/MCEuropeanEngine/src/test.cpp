@@ -249,11 +249,11 @@ int main(int argc, const char* argv[]) {
     gettimeofday(&end_time, 0);
     int exec_time = tvdiff(&st_time, &end_time);
     double time_elapsed = double(exec_time) / 1000 / 1000;
-    std::cout << "FPGA execution time: " << time_elapsed << " s\n"
-              << "options number: " << loop_nm * num_rep << " \n"
-              << "opt/sec: " << double(loop_nm * num_rep) / time_elapsed << std::endl;
+    std::cout << "INFO: FPGA execution time: " << time_elapsed << " s\n"
+              << "INFO: options number: " << loop_nm * num_rep << " \n"
+              << "INFO: opt/sec: " << double(loop_nm * num_rep) / time_elapsed << std::endl;
     DtUsed golden = 3.834522;
-    std::cout << "Expected value: " << golden << ::std::endl;
+    std::cout << "INFO: Expected value: " << golden << ::std::endl;
     if (num_rep > cu_number) {
         return print_result(cu_number, out_a, golden, max_diff);
     }
