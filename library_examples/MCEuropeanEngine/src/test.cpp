@@ -65,6 +65,7 @@ int main(int argc, const char* argv[]) {
         return 1;
     }
 
+    
     struct timeval st_time, end_time;
 
     // test data
@@ -87,7 +88,7 @@ int main(int argc, const char* argv[]) {
         mode_emu = std::getenv("XCL_EMULATION_MODE");
     }
 
-    int num_rep = 20;
+    unsigned int num_rep = 20;
     std::string num_str;
     if (parser.getCmdOption("-rep", num_str)) {
         try {
@@ -96,6 +97,20 @@ int main(int argc, const char* argv[]) {
             num_rep = 1;
         }
     }
+    if (parser.getCmdOption("-loop_nm", num_str)) {
+        try {
+            loop_nm = std::stoi(num_str);
+        } catch (...) {
+            loop_nm = 1024;
+        }
+    }  
+    if (parser.getCmdOption("-requiredSamples", num_str)) {
+        try {
+            requiredSamples = std::stoi(num_str);
+        } catch (...) {
+            requiredSamples = 0;
+        }
+    }  
     DtUsed max_diff = requiredTolerance * 2;
 
     std::vector<cl::Device> devices = xcl::get_xil_devices();
@@ -121,6 +136,8 @@ int main(int argc, const char* argv[]) {
     {
         cl::Kernel k(program, krnl_name.c_str());
         k.getInfo(CL_KERNEL_COMPUTE_UNIT_COUNT, &cu_number);
+        //cu_number=1;
+        std::cout << "DEBUG: Detected cu_number = " << cu_number << std::endl;
     }
     if (mode_emu.compare("hw_emu") == 0) {
         loop_nm = 1;
@@ -132,9 +149,10 @@ int main(int argc, const char* argv[]) {
         num_rep = cu_number * 3;
     }
 
-    std::cout << "loop_nm = " << loop_nm << std::endl;
-    std::cout << "num_rep = " << num_rep << std::endl;
-    std::cout << "cu_number = " << cu_number << std::endl;
+    std::cout << "loop_nm         = " << loop_nm << std::endl;
+    std::cout << "num_rep         = " << num_rep << std::endl;
+    std::cout << "cu_number       = " << cu_number << std::endl;
+    std::cout << "requiredSamples = " << requiredSamples << std::endl;
     std::vector<cl::Kernel> krnl0(cu_number);
     std::vector<cl::Kernel> krnl1(cu_number);
 
@@ -147,19 +165,19 @@ int main(int argc, const char* argv[]) {
 
     std::vector<DtUsed*> out_a(cu_number);
     std::vector<DtUsed*> out_b(cu_number);
-    for (int i = 0; i < cu_number; ++i) {
+    for (unsigned int i = 0; i < cu_number; ++i) {
         out_a[i] = aligned_alloc<DtUsed>(OUTDEP);
         out_b[i] = aligned_alloc<DtUsed>(OUTDEP);
     }
     std::vector<cl_mem_ext_ptr_t> mext_out_a(cu_number);
     std::vector<cl_mem_ext_ptr_t> mext_out_b(cu_number);
-    for (int i = 0; i < cu_number; ++i) {
+    for (unsigned int i = 0; i < cu_number; ++i) {
         mext_out_a[i] = {9, out_a[i], krnl0[i]()};
         mext_out_b[i] = {9, out_b[i], krnl1[i]()};
     }
     std::vector<cl::Buffer> out_buff_a(cu_number);
     std::vector<cl::Buffer> out_buff_b(cu_number);
-    for (int i = 0; i < cu_number; i++) {
+    for (unsigned int i = 0; i < cu_number; i++) {
         out_buff_a[i] = cl::Buffer(context, CL_MEM_EXT_PTR_XILINX | CL_MEM_USE_HOST_PTR | CL_MEM_READ_WRITE,
                                    (size_t)(OUTDEP * sizeof(DtUsed)), &mext_out_a[i]);
         out_buff_b[i] = cl::Buffer(context, CL_MEM_EXT_PTR_XILINX | CL_MEM_USE_HOST_PTR | CL_MEM_READ_WRITE,
@@ -167,11 +185,11 @@ int main(int argc, const char* argv[]) {
     }
     std::vector<std::vector<cl::Event> > kernel_events(num_rep);
     std::vector<std::vector<cl::Event> > read_events(num_rep);
-    for (int i = 0; i < num_rep; ++i) {
+    for (unsigned int i = 0; i < num_rep; ++i) {
         kernel_events[i].resize(cu_number);
         read_events[i].resize(1);
     }
-    for (int i = 0; i < cu_number; ++i) {
+    for (unsigned int i = 0; i < cu_number; ++i) {
         int j = 0;
         krnl0[i].setArg(j++, loop_nm);
         krnl0[i].setArg(j++, seeds[i]);
@@ -188,7 +206,7 @@ int main(int argc, const char* argv[]) {
         krnl0[i].setArg(j++, timeSteps);
         krnl0[i].setArg(j++, maxSamples);
     }
-    for (int i = 0; i < cu_number; ++i) {
+    for (unsigned int i = 0; i < cu_number; ++i) {
         int j = 0;
         krnl1[i].setArg(j++, loop_nm);
         krnl1[i].setArg(j++, seeds[i]);
@@ -208,31 +226,31 @@ int main(int argc, const char* argv[]) {
 
     std::vector<cl::Memory> out_vec_a; //{out_buff[0]};
     std::vector<cl::Memory> out_vec_b; //{out_buff[0]};
-    for (int i = 0; i < cu_number; ++i) {
+    for (unsigned int i = 0; i < cu_number; ++i) {
         out_vec_a.push_back(out_buff_a[i]);
         out_vec_b.push_back(out_buff_b[i]);
     }
     q.finish();
     gettimeofday(&st_time, 0);
-    for (int i = 0; i < num_rep / cu_number; ++i) {
+    for (unsigned int i = 0; i < num_rep / cu_number; ++i) {
         int use_a = i & 1;
         if (use_a) {
             if (i > 1) {
-                for (int c = 0; c < cu_number; ++c) {
+                for (unsigned int c = 0; c < cu_number; ++c) {
                     q.enqueueTask(krnl0[c], &read_events[i - 2], &kernel_events[i][c]);
                 }
             } else {
-                for (int c = 0; c < cu_number; ++c) {
+                for (unsigned int c = 0; c < cu_number; ++c) {
                     q.enqueueTask(krnl0[c], nullptr, &kernel_events[i][c]);
                 }
             }
         } else {
             if (i > 1) {
-                for (int c = 0; c < cu_number; ++c) {
+                for (unsigned int c = 0; c < cu_number; ++c) {
                     q.enqueueTask(krnl1[c], &read_events[i - 2], &kernel_events[i][c]);
                 }
             } else {
-                for (int c = 0; c < cu_number; ++c) {
+                for (unsigned int c = 0; c < cu_number; ++c) {
                     q.enqueueTask(krnl1[c], nullptr, &kernel_events[i][c]);
                 }
             }
