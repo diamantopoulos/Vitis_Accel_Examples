@@ -20,6 +20,7 @@
 #endif
 
 #include <math.h>
+#include <limits.h>
 #include "kernel_mceuropeanengine.hpp"
 
 class ArgParser {
@@ -65,9 +66,11 @@ int main(int argc, const char* argv[]) {
         return 1;
     }
 
+    // execution time variables
+    struct timeval st_time_device, end_time_device, st_time_opencl_prep, end_time_opencl_prep;
+    int exec_time = 0, cur_exec_time, min_exec_time=INT_MAX, max_exec_time=INT_MIN;
+    unsigned int repeats = 1;
     
-    struct timeval st_time, end_time, st_time_device, end_time_device, st_time_opencl_prep, end_time_opencl_prep;
-
     // test data
     unsigned int timeSteps = 1;
     DtUsed requiredTolerance = 0.02;
@@ -90,13 +93,22 @@ int main(int argc, const char* argv[]) {
 
     unsigned int num_rep = 20;
     std::string num_str;
-    if (parser.getCmdOption("-rep", num_str)) {
+    if (parser.getCmdOption("-num_rep", num_str)) {
         try {
             num_rep = std::stoi(num_str);
         } catch (...) {
             num_rep = 1;
         }
     }
+    if (parser.getCmdOption("-repeats", num_str)) {
+        try {
+            repeats = std::stoi(num_str);
+        } catch (...) {
+            repeats = 1;
+        }
+    }
+    std::vector <timeval> st_time_vec(repeats), end_time_vec(repeats);  
+
     if (parser.getCmdOption("-loop_nm", num_str)) {
         try {
             loop_nm = std::stoi(num_str);
@@ -167,6 +179,7 @@ int main(int argc, const char* argv[]) {
     std::cout << "num_rep         = " << num_rep << std::endl;
     std::cout << "cu_number       = " << cu_number << std::endl;
     std::cout << "requiredSamples = " << requiredSamples << std::endl;
+    std::cout << "repeats         = " << repeats << std::endl;
     
     gettimeofday(&st_time_opencl_prep, 0);
     
@@ -249,49 +262,65 @@ int main(int argc, const char* argv[]) {
     }
     q.finish();
     gettimeofday(&end_time_opencl_prep, 0);
-    gettimeofday(&st_time, 0);
-    for (unsigned int i = 0; i < num_rep / cu_number; ++i) {
-        int use_a = i & 1;
-        if (use_a) {
-            if (i > 1) {
-                for (unsigned int c = 0; c < cu_number; ++c) {
-                    q.enqueueTask(krnl0[c], &read_events[i - 2], &kernel_events[i][c]);
+    
+    for (unsigned int rep = 0; rep < repeats ; rep++) {
+        gettimeofday(&st_time_vec[rep], 0);
+    
+        for (unsigned int i = 0; i < num_rep / cu_number; ++i) {
+            int use_a = i & 1;
+            if (use_a) {
+                if (i > 1) {
+                    for (unsigned int c = 0; c < cu_number; ++c) {
+                        q.enqueueTask(krnl0[c], &read_events[i - 2], &kernel_events[i][c]);
+                    }
+                } else {
+                    for (unsigned int c = 0; c < cu_number; ++c) {
+                        q.enqueueTask(krnl0[c], nullptr, &kernel_events[i][c]);
+                    }
                 }
             } else {
-                for (unsigned int c = 0; c < cu_number; ++c) {
-                    q.enqueueTask(krnl0[c], nullptr, &kernel_events[i][c]);
+                if (i > 1) {
+                    for (unsigned int c = 0; c < cu_number; ++c) {
+                        q.enqueueTask(krnl1[c], &read_events[i - 2], &kernel_events[i][c]);
+                    }
+                } else {
+                    for (unsigned int c = 0; c < cu_number; ++c) {
+                        q.enqueueTask(krnl1[c], nullptr, &kernel_events[i][c]);
+                    }
                 }
             }
-        } else {
-            if (i > 1) {
-                for (unsigned int c = 0; c < cu_number; ++c) {
-                    q.enqueueTask(krnl1[c], &read_events[i - 2], &kernel_events[i][c]);
-                }
+            if (use_a) {
+                q.enqueueMigrateMemObjects(out_vec_a, CL_MIGRATE_MEM_OBJECT_HOST, &kernel_events[i], &read_events[i][0]);
             } else {
-                for (unsigned int c = 0; c < cu_number; ++c) {
-                    q.enqueueTask(krnl1[c], nullptr, &kernel_events[i][c]);
-                }
+                q.enqueueMigrateMemObjects(out_vec_b, CL_MIGRATE_MEM_OBJECT_HOST, &kernel_events[i], &read_events[i][0]);
             }
         }
-        if (use_a) {
-            q.enqueueMigrateMemObjects(out_vec_a, CL_MIGRATE_MEM_OBJECT_HOST, &kernel_events[i], &read_events[i][0]);
-        } else {
-            q.enqueueMigrateMemObjects(out_vec_b, CL_MIGRATE_MEM_OBJECT_HOST, &kernel_events[i], &read_events[i][0]);
-        }
-    }
 
-    q.flush();
-    q.finish();
-    gettimeofday(&end_time, 0);
+        q.flush();
+        q.finish();
+        gettimeofday(&end_time_vec[rep], 0);
+        cur_exec_time = tvdiff(&st_time_vec[rep], &end_time_vec[rep]);
+        if (cur_exec_time < min_exec_time) {
+            min_exec_time = cur_exec_time;
+        }
+        if (cur_exec_time > max_exec_time) {
+            max_exec_time = cur_exec_time;
+        }
+        exec_time += cur_exec_time;
+    }
     int device_time = tvdiff(&st_time_device, &end_time_device);
     int opencl_prep_time = tvdiff(&st_time_opencl_prep, &end_time_opencl_prep);
-    int exec_time = tvdiff(&st_time, &end_time);
     double time_device_elapsed = double(device_time) / 1000 / 1000;
     double time_opencl_prep_elapsed = double(opencl_prep_time) / 1000 / 1000;
-    double time_elapsed = double(exec_time) / 1000 / 1000;
+    double time_elapsed = double(exec_time) / double(repeats) / 1000 / 1000;
+    double time_elapsed_min = double(min_exec_time) / 1000 / 1000;
+    double time_elapsed_max = double(max_exec_time) / 1000 / 1000;
+    
     std::cout << "INFO: FPGA device configuration time: " << time_device_elapsed << " s\n"
               << "INFO: FPGA opencl preparation time  : " << time_opencl_prep_elapsed << " s\n"
               << "INFO: FPGA execution time           : " << time_elapsed << " s\n"
+              << "INFO: FPGA min execution time       : " << time_elapsed_min << " s\n"
+              << "INFO: FPGA max execution time       : " << time_elapsed_max << " s\n"              
               << "INFO: FPGA E2E time                 : " << time_device_elapsed + time_opencl_prep_elapsed + time_elapsed << " s\n"
               << "INFO: options number                : " << loop_nm * num_rep << " \n"
               << "INFO: opt/sec                       : " << double(loop_nm * num_rep) / time_elapsed << std::endl;
