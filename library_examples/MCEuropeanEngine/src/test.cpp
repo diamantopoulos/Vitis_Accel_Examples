@@ -132,11 +132,18 @@ int main(int argc, const char* argv[]) {
     cl::Program program(context, devices, xclbins);
 
     std::string krnl_name = "kernel_mc";
-    cl_uint cu_number;
+    cl_uint cu_number_detected, cu_number=0;
     {
         cl::Kernel k(program, krnl_name.c_str());
-        k.getInfo(CL_KERNEL_COMPUTE_UNIT_COUNT, &cu_number);
+        k.getInfo(CL_KERNEL_COMPUTE_UNIT_COUNT, &cu_number_detected);
         //cu_number=1;
+        if (parser.getCmdOption("-cu_number", num_str)) {
+           try {
+             cu_number = std::stoi(num_str);
+           }  catch (...) {
+             cu_number = cu_number_detected;
+           }
+         }
         std::cout << "DEBUG: Detected cu_number = " << cu_number << std::endl;
     }
     if (mode_emu.compare("hw_emu") == 0) {
