@@ -66,7 +66,7 @@ int main(int argc, const char* argv[]) {
     }
 
     
-    struct timeval st_time, end_time;
+    struct timeval st_time, end_time, st_time_device, end_time_device, st_time_opencl_prep, end_time_opencl_prep;
 
     // test data
     unsigned int timeSteps = 1;
@@ -113,6 +113,8 @@ int main(int argc, const char* argv[]) {
     }  
     DtUsed max_diff = requiredTolerance * 2;
 
+    gettimeofday(&st_time_device, 0);
+    
     std::vector<cl::Device> devices = xcl::get_xil_devices();
     cl::Device device = devices[0];
     cl::Context context(device);
@@ -131,20 +133,25 @@ int main(int argc, const char* argv[]) {
 
     cl::Program program(context, devices, xclbins);
 
+    gettimeofday(&end_time_device, 0);
+    
     std::string krnl_name = "kernel_mc";
     cl_uint cu_number_detected, cu_number=0;
     {
         cl::Kernel k(program, krnl_name.c_str());
         k.getInfo(CL_KERNEL_COMPUTE_UNIT_COUNT, &cu_number_detected);
-        //cu_number=1;
         if (parser.getCmdOption("-cu_number", num_str)) {
            try {
              cu_number = std::stoi(num_str);
            }  catch (...) {
-             cu_number = cu_number_detected;
+               std::cout << "WARNING: Invalid cu_number. Will assign 1." << std::endl; 
+               cu_number = 1;
            }
          }
-        std::cout << "DEBUG: Detected cu_number = " << cu_number << std::endl;
+         else {
+             cu_number = cu_number_detected;
+         }
+        std::cout << "INFO: Detected cu_number = " << cu_number << std::endl;
     }
     if (mode_emu.compare("hw_emu") == 0) {
         loop_nm = 1;
@@ -160,6 +167,9 @@ int main(int argc, const char* argv[]) {
     std::cout << "num_rep         = " << num_rep << std::endl;
     std::cout << "cu_number       = " << cu_number << std::endl;
     std::cout << "requiredSamples = " << requiredSamples << std::endl;
+    
+    gettimeofday(&st_time_opencl_prep, 0);
+    
     std::vector<cl::Kernel> krnl0(cu_number);
     std::vector<cl::Kernel> krnl1(cu_number);
 
@@ -238,6 +248,7 @@ int main(int argc, const char* argv[]) {
         out_vec_b.push_back(out_buff_b[i]);
     }
     q.finish();
+    gettimeofday(&end_time_opencl_prep, 0);
     gettimeofday(&st_time, 0);
     for (unsigned int i = 0; i < num_rep / cu_number; ++i) {
         int use_a = i & 1;
@@ -272,13 +283,20 @@ int main(int argc, const char* argv[]) {
     q.flush();
     q.finish();
     gettimeofday(&end_time, 0);
+    int device_time = tvdiff(&st_time_device, &end_time_device);
+    int opencl_prep_time = tvdiff(&st_time_opencl_prep, &end_time_opencl_prep);
     int exec_time = tvdiff(&st_time, &end_time);
+    double time_device_elapsed = double(device_time) / 1000 / 1000;
+    double time_opencl_prep_elapsed = double(opencl_prep_time) / 1000 / 1000;
     double time_elapsed = double(exec_time) / 1000 / 1000;
-    std::cout << "INFO: FPGA execution time: " << time_elapsed << " s\n"
-              << "INFO: options number: " << loop_nm * num_rep << " \n"
-              << "INFO: opt/sec: " << double(loop_nm * num_rep) / time_elapsed << std::endl;
+    std::cout << "INFO: FPGA device configuration time: " << time_device_elapsed << " s\n"
+              << "INFO: FPGA opencl preparation time  : " << time_opencl_prep_elapsed << " s\n"
+              << "INFO: FPGA execution time           : " << time_elapsed << " s\n"
+              << "INFO: FPGA E2E time                 : " << time_device_elapsed + time_opencl_prep_elapsed + time_elapsed << " s\n"
+              << "INFO: options number                : " << loop_nm * num_rep << " \n"
+              << "INFO: opt/sec                       : " << double(loop_nm * num_rep) / time_elapsed << std::endl;
     DtUsed golden = 3.834522;
-    std::cout << "INFO: Expected value: " << golden << ::std::endl;
+    std::cout << "INFO: Expected value                : " << golden << ::std::endl;
     if (num_rep > cu_number) {
         return print_result(cu_number, out_a, golden, max_diff);
     }
